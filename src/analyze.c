@@ -903,6 +903,7 @@ static double mode_coding_unit(core_t *core, lbac_t *lbac_best, int x, int y, in
     //**************** inter ********************
     double cost_best = MAX_D_COST;
     core->cost_best  = MAX_D_COST;
+    core->inter_satd = COM_UINT64_MAX;
 
     if (core->slice_type != SLICE_I && cons_pred_mode != ONLY_INTRA) {
         analyze_inter_cu(core, lbac_best);
@@ -920,11 +921,7 @@ static double mode_coding_unit(core_t *core, lbac_t *lbac_best, int x, int y, in
 
         if (cu_width <= 64 && cu_height <= 64 && (!history->skip_intra || cons_pred_mode == ONLY_INTRA)) {
             core->dist_cu_best = COM_UINT64_MAX;
-            if (core->cost_best < MAX_D_COST_EXT) {
-                core->inter_satd = com_had(cu_width, cu_height, pic_org->y + (y * pic_org->stride_luma) + x, pic_org->stride_luma, bst_info->pred[0], 1 << cu_width_log2, bit_depth);
-            } else {
-                core->inter_satd = COM_UINT64_MAX;
-            }
+   
             for (int ipf_flag = 0; ipf_flag < ipf_passes_num; ++ipf_flag) {
                 cur_info->ipf_flag = ipf_flag;
                 
@@ -1190,6 +1187,11 @@ static double mode_coding_tree(core_t *core, lbac_t *lbac_cur, int x0, int y0, i
             split_allow[NO_SPLIT] = 0;
         }
         // ******** 2. fast algorithm to reduce modes **********
+        if (info->depth_max_bt_32 && (cu_width > 32 || cu_height > 32) && !boundary && split_allow[SPLIT_QUAD]) {
+            split_allow[SPLIT_BI_VER] = 0;
+            split_allow[SPLIT_BI_HOR] = 0;
+        }
+
         check_run_split(core, cu_width_log2, cu_height_log2, cup, split_allow);
 
 		//********* x. CUs with large size are not allowed to use EQT **********
@@ -1260,7 +1262,7 @@ static double mode_coding_tree(core_t *core, lbac_t *lbac_cur, int x0, int y0, i
         if (split_allow[NO_SPLIT]) {
             if (cu_width > MIN_CU_SIZE || cu_height > MIN_CU_SIZE) {
                 int bit_cnt = lbac_get_bits(lbac_cur);
-                com_set_split_mode(NO_SPLIT, cud, 0, cu_width, cu_height, cu_width, cu_data_tmp->split_mode);
+                com_set_split_mode(NO_SPLIT, cud, 0, cu_width, cu_height, cu_width, cu_data_bst->split_mode);
                 lbac_enc_split_mode(lbac_cur, NULL, core, NO_SPLIT, cud, 0, cu_width, cu_height, cu_width, parent_split, qt_depth, bet_depth, x0, y0);
                 bit_cnt = lbac_get_bits(lbac_cur) - bit_cnt;
                 cost_temp += RATE_TO_COST_LAMBDA(core->lambda[0], bit_cnt);
@@ -1274,12 +1276,10 @@ static double mode_coding_tree(core_t *core, lbac_t *lbac_cur, int x0, int y0, i
             }
             core->tree_status = tree_status;
             core->cons_pred_mode = cons_pred_mode;
-            cost_temp += mode_coding_unit(core, lbac_cur, x0, y0, cu_width_log2, cu_height_log2, cud, cu_data_tmp, texture_dir);
-
-            copy_cu_data(cu_data_bst, cu_data_tmp, 0, 0, cu_width_log2, cu_height_log2, cu_width_log2, cud, tree_status);
+            cost_temp += mode_coding_unit(core, lbac_cur, x0, y0, cu_width_log2, cu_height_log2, cud, cu_data_bst, texture_dir);
 
             if (info->sqh.num_of_hmvp && bst_info->cu_mode != MODE_INTRA && !bst_info->affine_flag) {
-                update_skip_candidates(motion_cands_curr, &cnt_hmvp_cands_curr, info->sqh.num_of_hmvp, cu_data_tmp->mv[0], cu_data_tmp->refi[0]);
+                update_skip_candidates(motion_cands_curr, &cnt_hmvp_cands_curr, info->sqh.num_of_hmvp, cu_data_bst->mv[0], cu_data_bst->refi[0]);
             }
             cost_best = cost_temp;
             best_split_mode = NO_SPLIT;
@@ -1295,7 +1295,7 @@ static double mode_coding_tree(core_t *core, lbac_t *lbac_cur, int x0, int y0, i
         nscost = cost_temp;
     }
  
-    if (cost_best < MAX_D_COST && bst_info->cu_mode == MODE_SKIP) {
+    if (cost_best < MAX_D_COST_EXT && bst_info->cu_mode == MODE_SKIP) {
         int enc_ecu_depth = (core->pic_org->layer_id == FRM_DEPTH_5 ? 3 : 4);
 
         if (cud >= enc_ecu_depth) {
@@ -1303,7 +1303,7 @@ static double mode_coding_tree(core_t *core, lbac_t *lbac_cur, int x0, int y0, i
         }
     }
 
-    if (cost_best < MAX_D_COST) {
+    if (cost_best < MAX_D_COST_EXT) {
         if (slice_type == SLICE_I) {
             if (bst_info->ipm[PB0][0] != IPD_IPCM && core->dist_cu_best < ((u64)1 << (cu_width_log2 + cu_height_log2 + 7))) {
                 u8 bits_inc_by_split = ((cu_width_log2 + cu_height_log2 >= 6) ? 2 : 0) + 8; //two split flags + one more (intra dir + cbf + edi_flag + mtr info) + 1-bit penalty, approximately 8 bits
@@ -1380,8 +1380,11 @@ static double mode_coding_tree(core_t *core, lbac_t *lbac_cur, int x0, int y0, i
                         //RDcostNS * a + lambda * (SplitBits + b) > RDcostNS
                         double a = 0.9, b = 1.0;
 
-                        if (info->skip_split_P1) {
+                        if (info->depth_terminate_P1) {
                             a = 0.8, b = 10.0;
+                            if (info->depth_terminate_P2) {
+                                a = 0.94, b = 4.0;
+                            }
                         }
                         if (nscost * a + cost_temp + RATE_TO_COST_LAMBDA(core->lambda[0], b) > nscost) {
                             continue;
@@ -1411,7 +1414,7 @@ static double mode_coding_tree(core_t *core, lbac_t *lbac_cur, int x0, int y0, i
                             prev_log2_sub_cuh = log2_sub_cuh;
                         }
                     }
-                    if (cost_temp < MAX_D_COST && tree_status_child == TREE_L && tree_status == TREE_LC) {
+                    if (cost_temp < MAX_D_COST_EXT && tree_status_child == TREE_L && tree_status == TREE_LC) {
                         core->tree_status = TREE_C;
                         core->cons_pred_mode = NO_MODE_CONS;
                         lbac_copy(&core->lbac_bakup, &lbac_tree_c);
@@ -1484,17 +1487,6 @@ static double mode_coding_tree(core_t *core, lbac_t *lbac_cur, int x0, int y0, i
     update_map_scu(core, x0, y0, 1 << cu_width_log2, 1 << cu_height_log2);
 
     return (cost_best > MAX_D_COST_EXT) ? MAX_D_COST : cost_best;
-}
-
-int enc_mode_init_lcu(core_t *core)
-{
-    core->pinter.lambda_mv = (u32)floor(65536.0 * core->sqrt_lambda[0]);
-
-    core->lcu_qp_y = core->lcu_qp_y;
-    core->lcu_qp_u = core->lcu_qp_u;
-    core->lcu_qp_v = core->lcu_qp_v;
-
-    return COM_OK;
 }
 
 int enc_mode_analyze_lcu(core_t *core, const lbac_t *lbac)

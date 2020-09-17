@@ -67,7 +67,7 @@ static void create_bi_org(pel *org, pel *pred, int s_o, int cu_width, int cu_hei
     }
 }
 
-static int make_cand_list(core_t *core, int *mode_list, double *cost_list, int num_cands_woUMVE, int num_cands_all, int num_rdo, s16 pmv_skip_cand[MAX_SKIP_NUM][REFP_NUM][MV_D],  s8 refi_skip_cand[MAX_SKIP_NUM][REFP_NUM])
+static int make_cand_list(core_t *core, int *mode_list, u64 *cost_list, int num_cands_woUMVE, int num_cands_all, int num_rdo, s16 pmv_skip_cand[MAX_SKIP_NUM][REFP_NUM][MV_D],  s8 refi_skip_cand[MAX_SKIP_NUM][REFP_NUM])
 {
     com_info_t *info     =  core->info;
     com_mode_t *cur_info = &core->mod_info_curr;
@@ -89,7 +89,7 @@ static int make_cand_list(core_t *core, int *mode_list, double *cost_list, int n
 
     for (int i = 0; i < num_rdo; i++) {
         mode_list[i] = 0;
-        cost_list[i] = MAX_D_COST;
+        cost_list[i] = COM_UINT64_MAX;
     }
     for (int skip_idx = 0; skip_idx < num_cands_all; skip_idx++) {
         int shift = 0;
@@ -126,23 +126,10 @@ static int make_cand_list(core_t *core, int *mode_list, double *cost_list, int n
                 cost_list[num_rdo - i] = cost_list[num_rdo - 1 - i];
             }
             mode_list[num_rdo - shift] = skip_idx;
-            cost_list[num_rdo - shift] = cost;
+            cost_list[num_rdo - shift] = (u64)cost;
         }
     }
 
-    if (core->info->skip_adaptive_num_rdo) {
-        double threshold = 1.08;
-        if (core->info->skip_adaptive_num_rdo_P1) {
-            threshold = 1.05;
-        }
-        for (int i = num_rdo - 1; i > 0; i--) {
-            if (cost_list[i] > cost_list[0] * threshold) {
-                num_rdo--;
-            } else {
-                break;
-            }
-        }
-    }
     return num_rdo;
 }
 
@@ -181,7 +168,8 @@ static void check_best_mode(core_t *core, lbac_t *lbac_best, lbac_t *lbac, const
             }
         }
     }
-    double skip_mode_2_threshold = core->lcu_qp_y / 60.0 * (THRESHOLD_MVPS_CHECK - 1) + 1;
+    double skip_mode_2_threshold = core->lcu_qp_y / 600.0 + 1.0;
+
     if (bst_info->cu_mode == MODE_SKIP && cur_info->cu_mode == MODE_INTER && (core->cost_best * skip_mode_2_threshold) > cost_curr) {
         core->skip_mvps_check = 0;
     }
@@ -678,7 +666,7 @@ static int analyze_direct_skip(core_t *core, lbac_t *lbac_best)
     com_mode_t *cur_info = &core->mod_info_curr;
     s16 pmv_cands[MAX_SKIP_NUM + UMVE_MAX_REFINE_NUM * UMVE_BASE_NUM][REFP_NUM][MV_D];
     s8 refi_cands[MAX_SKIP_NUM + UMVE_MAX_REFINE_NUM * UMVE_BASE_NUM][REFP_NUM];
-    double cost_list[MAX_INTER_SKIP_RDO];
+    u64 cost_list[MAX_INTER_SKIP_RDO];
     int    mode_list[MAX_INTER_SKIP_RDO];
     int    num_cands_all, num_rdo, num_cands_woUMVE;
     double min_cost = MAX_D_COST;
@@ -698,6 +686,9 @@ static int analyze_direct_skip(core_t *core, lbac_t *lbac_best)
     memset(core->skip_emvr_mode, 0, sizeof(core->skip_emvr_mode));
 
     for (int skip_idx = 0; skip_idx < num_rdo; skip_idx++) {
+        if (info->rmv_skip_candi_by_satd && core->inter_satd != COM_UINT64_MAX && cost_list[skip_idx] > core->inter_satd * core->satd_threshold) {
+			break;
+		}
         int mode = mode_list[skip_idx];
 
         if (mode < num_cands_woUMVE) {
@@ -735,6 +726,9 @@ static int analyze_direct_skip(core_t *core, lbac_t *lbac_best)
             best_skip_idx = skip_idx;
         }
 
+		if (cost_dir == core->cost_best || cost_skip == core->cost_best) {
+			core->inter_satd = cost_list[skip_idx];
+		}
         int emvr_idx = mode - TRADITIONAL_SKIP_NUM;
 
         if (!cur_info->umve_flag && emvr_idx >= 0 && emvr_idx <= 4) {
@@ -856,7 +850,7 @@ static void analyze_uni_pred(core_t *core, lbac_t *lbac_best, s16 mv_L0L1[REFP_N
 
     pi->i_org   = core->pic_org->stride_luma;
     pi->org     = core->pic_org->y + y * pi->i_org + x;
-    pi->adaptive_raster_range = core->info->me_adaptive_raster_range;
+    pi->adaptive_raster_range = core->info->adaptive_raster_range;
 
     cur_info->cu_mode = MODE_INTER;
 
@@ -874,7 +868,7 @@ static void analyze_uni_pred(core_t *core, lbac_t *lbac_best, s16 mv_L0L1[REFP_N
             com_derive_mvp(core->info, core->ptr, core->cu_scup_in_pic, lidx, refi_cur, cur_info->hmvp_flag, core->cnt_hmvp_cands,
                            core->motion_cands, core->map, core->refp, cur_info->mvr_idx, cu_width, cu_height, mvp);
             
-            if(core->info->inter_uni_same_ref && lidx){ // skip ME if ref and mvp in L1 are same as that in L0
+            if(core->info->rmv_uni_same_ref && lidx){ // skip ME if ref and mvp in L1 are same as that in L0
                 int check_refi = 0;
                 int check_num = core->num_refp[0];
 
@@ -917,7 +911,7 @@ static void analyze_uni_pred(core_t *core, lbac_t *lbac_best, s16 mv_L0L1[REFP_N
         refi_L0L1[lidx] = best_refi;
         me_cost_L0L1[lidx] = best_mecost;
         
-        if(core->info->inter_uni_same_ref && lidx){ // skip RDO if ref and mv in L1 are same as that in L0
+        if(core->info->rmv_uni_same_ref && lidx){ // skip RDO if ref and mv in L1 are same as that in L0
             if ((core->refp[refi_L0L1[0]][0].ptr == core->refp[refi_L0L1[1]][1].ptr) && M32(pi->mv_scale[0][refi_L0L1[0]]) == M32(pi->mv_scale[1][refi_L0L1[1]])){
                 CP32(mv_L0L1[1], mv_L0L1[0]);
                 pi->mot_bits[1] = pi->mot_bits[0];
@@ -941,14 +935,27 @@ static void analyze_uni_pred(core_t *core, lbac_t *lbac_best, s16 mv_L0L1[REFP_N
 
         pi->mot_bits[lidx] = get_mv_bits(pi, mvd[MV_X], mvd[MV_Y], pi->num_refp, best_refi, cur_info->mvr_idx);
         
-        if(core->info->inter_adaptive_num_rdo){
-            if (pi->curr_mvr < 2 && me_cost_L0L1[lidx] > core->inter_satd * 1.1) {
+        if(core->info->rmv_inter_candi_by_satd){
+            if (pi->curr_mvr < 2 && me_cost_L0L1[lidx] > core->inter_satd * core->satd_threshold) {
                 rdo_flag [lidx] = 0;
                 continue;
+            }
+            if (pi->curr_mvr > 1) {
+                u32 lambda_mv = pi->lambda_mv;
+                int bit_depth = core->info->bit_depth_internal;
+                com_mc_cu(x, y, core->info->pic_width, core->info->pic_height, cu_width, cu_height, cur_info->refi, cur_info->mv, core->refp, cur_info->pred, cu_width, CHANNEL_L, bit_depth);
+                u64 temp_satd_mecost = com_had(cu_width, cu_height, pi->org, core->pic_org->stride_luma, cur_info->pred[0], cu_width, bit_depth);
+                temp_satd_mecost += MV_COST(pi->mot_bits[lidx] + pi->curr_mvr + (pi->curr_mvr < MAX_NUM_MVR - 1) + 2);
+
+                if (temp_satd_mecost > core->inter_satd * core->satd_threshold) {
+                    rdo_flag[lidx] = 0;
+                    continue;
+                }
             }
         }
 
         rdo_cost_L0L1[lidx] = inter_rdcost(core, lbac_best, 0, 1, NULL, NULL);
+
         if (rdo_cost_L0L1[lidx] == core->cost_best && pi->curr_mvr < 2){
             core->inter_satd = me_cost_L0L1[lidx];
         }
@@ -1034,9 +1041,19 @@ static void analyze_bi(core_t *core, lbac_t *lbac_best, s16 mv_L0L1[REFP_NUM][MV
             break;
         }
     }
-    if(core->info->inter_adaptive_num_rdo){
-        if (pi->curr_mvr < 2 && best_mecost > core->inter_satd * 1.1) {
+    if(core->info->rmv_inter_candi_by_satd){
+        if (pi->curr_mvr < 2 && best_mecost > core->inter_satd * core->satd_threshold) {
             return;
+        }
+        if (pi->curr_mvr > 1) {
+            u32 lambda_mv = pi->lambda_mv;
+            com_mc_cu(x, y, info->pic_width, info->pic_height, cu_width, cu_height, cur_info->refi, cur_info->mv, core->refp, cur_info->pred, cu_width, CHANNEL_L, bit_depth);
+            best_mecost = com_had(cu_width, cu_height, org, pic_org->stride_luma, cur_info->pred[0], cu_width, bit_depth);
+            best_mecost += MV_COST(pi->mot_bits[lidx_ref] + pi->curr_mvr + (pi->curr_mvr < MAX_NUM_MVR - 1) + pi->mot_bits[lidx_cnd] + 1);
+
+            if (best_mecost > core->inter_satd * core->satd_threshold) {
+                return;
+            }
         }
     }
 
@@ -1045,8 +1062,9 @@ static void analyze_bi(core_t *core, lbac_t *lbac_best, s16 mv_L0L1[REFP_NUM][MV
     cur_info->mvd[REFP_1][MV_X] = cur_info->mv[REFP_1][MV_X] - pi->mvp_scale[REFP_1][cur_info->refi[REFP_1]][MV_X];
     cur_info->mvd[REFP_1][MV_Y] = cur_info->mv[REFP_1][MV_Y] - pi->mvp_scale[REFP_1][cur_info->refi[REFP_1]][MV_Y];
 
-    double cost_best = inter_rdcost(core, lbac_best, 0, 1, NULL, NULL);
-    if (cost_best == core->cost_best && pi->curr_mvr < 2){
+    double cost_bi = inter_rdcost(core, lbac_best, 0, 1, NULL, NULL);
+
+    if (cost_bi == core->cost_best && pi->curr_mvr < 2){
         core->inter_satd = best_mecost;
     }
 }
@@ -1215,8 +1233,8 @@ static void analyze_smvd(core_t *core, lbac_t *lbac_best)
     mecost = smvd_refine(core, x, y, log2_cuw, log2_cuh, mv, mvp, cur_info->refi, 0, 1, mecost, 2, 8, cur_info->mvr_idx);
     mecost = smvd_refine(core, x, y, log2_cuw, log2_cuh, mv, mvp, cur_info->refi, 0, 1, mecost, 0, 1, cur_info->mvr_idx);
 
-    if(core->info->inter_adaptive_num_rdo){
-        if (pi->curr_mvr < 2 && mecost > core->inter_satd * 1.1) {
+    if(info->rmv_inter_candi_by_satd){
+        if (mecost > core->inter_satd * core->satd_threshold) {
             return;
         }
     }
@@ -1226,14 +1244,12 @@ static void analyze_smvd(core_t *core, lbac_t *lbac_best)
 
     cur_info->mvd[REFP_0][MV_X] = mv[REFP_0][MV_X] - mvp[REFP_0][MV_X];
     cur_info->mvd[REFP_0][MV_Y] = mv[REFP_0][MV_Y] - mvp[REFP_0][MV_Y];
-    cur_info->mvd[REFP_1][MV_X] = mv[REFP_1][MV_X] - mvp[REFP_1][MV_X];
-    cur_info->mvd[REFP_1][MV_Y] = mv[REFP_1][MV_Y] - mvp[REFP_1][MV_Y];
-
     cur_info->mvd[REFP_1][MV_X] = COM_CLIP3(COM_INT16_MIN, COM_INT16_MAX, -cur_info->mvd[REFP_0][MV_X]);
     cur_info->mvd[REFP_1][MV_Y] = COM_CLIP3(COM_INT16_MIN, COM_INT16_MAX, -cur_info->mvd[REFP_0][MV_Y]);
 
-    double cost_best = inter_rdcost(core, lbac_best, 0, 1, NULL, NULL);
-    if (cost_best == core->cost_best && pi->curr_mvr < 2){
+    double cost_smvd = inter_rdcost(core, lbac_best, 0, 1, NULL, NULL);
+
+    if (cost_smvd == core->cost_best){
         core->inter_satd = mecost;
     }
 }
@@ -1540,7 +1556,7 @@ static void analyze_affine_uni(core_t *core, lbac_t *lbac_best, CPMV aff_mv_L0L1
             com_get_affine_mvp_scaling(core->ptr, core->cu_scup_in_pic, lidx, refi_cur, map->map_mv, map->map_refi, core->refp,
                                         core->cu_width, core->cu_height, info->i_scu, affine_mvp, map->map_scu, map->map_pos, cur_info->mvr_idx);
             
-            if(core->info->inter_uni_same_ref && lidx){ // skip ME if ref and mvp in L1 are same as that in L0
+            if(core->info->rmv_uni_same_ref && lidx){ // skip ME if ref and mvp in L1 are same as that in L0
                 int check_refi = 0;
                 int check_num = core->num_refp[0];
 
@@ -1634,7 +1650,7 @@ static void analyze_affine_uni(core_t *core, lbac_t *lbac_best, CPMV aff_mv_L0L1
         refi_L0L1[lidx] = refi_bst;
         satd_cost_L0L1[lidx] = best_mecost;
 
-        if(core->info->inter_uni_same_ref && lidx){ // skip RDO if ref and mv in L1 are same as that in L0
+        if(core->info->rmv_uni_same_ref && lidx){ // skip RDO if ref and mv in L1 are same as that in L0
             if (core->refp[refi_L0L1[0]][0].ptr == core->refp[refi_bst][1].ptr && 
                 M64(pi->affine_mv_scale[0][refi_L0L1[0]][0]) == M64(pi->affine_mv_scale[1][refi_bst][0]) &&
                 M64(pi->affine_mv_scale[0][refi_L0L1[0]][1]) == M64(pi->affine_mv_scale[1][refi_bst][1])){
@@ -1665,8 +1681,8 @@ static void analyze_affine_uni(core_t *core, lbac_t *lbac_best, CPMV aff_mv_L0L1
 
         memcpy(aff_mv_L0L1[lidx], affine_mv, 2 * MV_D * sizeof(CPMV));
 
-        if(core->info->inter_adaptive_num_rdo){
-            if(satd_cost_L0L1[lidx] > core->inter_satd * 1.1){
+        if(core->info->rmv_inter_candi_by_satd){
+            if(satd_cost_L0L1[lidx] > core->inter_satd * core->satd_threshold){
                 rdo_flag [lidx] = 0;
                 continue;
             }
@@ -1785,14 +1801,15 @@ static void analyze_affine_bi(core_t *core, lbac_t *lbac_best, CPMV aff_mv_L0L1[
             return;
         }
     }
-    if(core->info->inter_adaptive_num_rdo){
-        if(best_mecost > core->inter_satd * 1.1){
+    if(core->info->rmv_inter_candi_by_satd){
+        if(best_mecost > core->inter_satd * core->satd_threshold){
             return;
         }
     }
 
-    double cost_best = inter_rdcost(core, lbac_best, 0, 1, NULL, NULL);
-    if(cost_best == core->cost_best){
+    double cost_affine_bi = inter_rdcost(core, lbac_best, 0, 1, NULL, NULL);
+
+    if(cost_affine_bi == core->cost_best){
         core->inter_satd = best_mecost;
     }
 }
@@ -1821,29 +1838,25 @@ static int is_same_with_tr(core_t *core, com_motion_t hmvp_motion)
 
 void analyze_inter_cu(core_t *core, lbac_t *lbac_best)
 {
-    com_info_t *info      = core->info;
-    inter_search_t *pi    = &core->pinter;
-    com_mode_t *cur_info  = &core->mod_info_curr;
-    com_mode_t *bst_info  = &core->mod_info_best;
-    int cu_width_log2     = core->cu_width_log2;
-    int cu_height_log2    = core->cu_height_log2;
-    int cu_width          = 1 << cu_width_log2;
-    int cu_height         = 1 << cu_height_log2;
-    int best_skip_idx     = 0;
-
-    int bit_depth = info->bit_depth_internal;
+    com_info_t *info       =  core->info;
+    inter_search_t *pi     = &core->pinter;
+    com_mode_t *cur_info   = &core->mod_info_curr;
+    com_mode_t *bst_info   = &core->mod_info_best;
+    int cu_width_log2      =  core->cu_width_log2;
+    int cu_height_log2     =  core->cu_height_log2;
+    int cu_width           = 1 << cu_width_log2;
+    int cu_height          = 1 << cu_height_log2;
+    int best_skip_idx      = 0;
     enc_history_t *history = &core->history_data[cu_width_log2 - 2][cu_height_log2 - 2][core->cu_scup_in_lcu];
+    int num_hmvp_inter     = MAX_NUM_MVR;
+    int num_amvr           = MAX_NUM_MVR;
+    int allow_affine       = info->sqh.affine_enable;
 
     init_pb_part(cur_info);
     init_tb_part(cur_info);
     get_part_info(info->i_scu, core->cu_scu_x << 2, core->cu_scu_y << 2, cu_width, cu_height, cur_info->pb_part, &cur_info->pb_info);
     get_part_info(info->i_scu, core->cu_scu_x << 2, core->cu_scu_y << 2, cu_width, cu_height, cur_info->tb_part, &cur_info->tb_info);
     cur_info->mvr_idx = 0;
-
-    int num_iter_mvp = 2;
-    int num_hmvp_inter = MAX_NUM_MVR;
-    int num_amvr = MAX_NUM_MVR;
-    int allow_affine = info->sqh.affine_enable;
 
     if (history->visit_mode_decision && info->sqh.emvr_enable) { 
         num_hmvp_inter = history->mvr_hmvp_idx_history + 1;
@@ -1866,16 +1879,13 @@ void analyze_inter_cu(core_t *core, lbac_t *lbac_best)
         int x                =  core->cu_pix_x;
         int y                =  core->cu_pix_y;
         best_skip_idx = analyze_direct_skip(core, lbac_best);
-        core->inter_satd = com_had(cu_width, cu_height, pic_org->y + (y * pic_org->stride_luma) + x, pic_org->stride_luma, bst_info->pred[Y_C], cu_width, bit_depth);
-    } else {
-        core->inter_satd = COM_UINT64_MAX;
     }
 
     memset(pi->hpel_satd, 0, sizeof(pi->hpel_satd));
     memset(pi->qpel_satd, 0, sizeof(pi->qpel_satd));
 
     if (!history->visit_mode_decision || history->cu_mode != MODE_SKIP) {
-        for (cur_info->hmvp_flag = 0; cur_info->hmvp_flag < num_iter_mvp; cur_info->hmvp_flag++) {
+        for (cur_info->hmvp_flag = 0; cur_info->hmvp_flag < 2; cur_info->hmvp_flag++) {
             if (cur_info->hmvp_flag) {
                 num_amvr = 0;
                 if (info->sqh.emvr_enable) {
@@ -1898,7 +1908,6 @@ void analyze_inter_cu(core_t *core, lbac_t *lbac_best)
                         continue;
                     }
                 }
-
                 init_pb_part(cur_info);
                 init_tb_part(cur_info);
                 get_part_info(info->i_scu, core->cu_scu_x << 2, core->cu_scu_y << 2, cu_width, cu_height, cur_info->pb_part, &cur_info->pb_info);
@@ -1912,13 +1921,11 @@ void analyze_inter_cu(core_t *core, lbac_t *lbac_best)
                         analyze_smvd(core, lbac_best);
                     }
                 }
-
                 if (cur_info->hmvp_flag) {
                     if (cur_info->mvr_idx > 1 && (bst_info->cu_mode == MODE_SKIP)) {
                         break;
                     }
-                }
-                else if (cur_info->mvr_idx && ((bst_info->cu_mode == MODE_SKIP || bst_info->cu_mode == MODE_DIR))) {
+                } else if (cur_info->mvr_idx && (bst_info->cu_mode == MODE_SKIP || bst_info->cu_mode == MODE_DIR)) {
                     break;
                 }
                 if (cur_info->mvr_idx > 1 && M32(bst_info->mvd[REFP_0]) == 0 && M32(bst_info->mvd[REFP_1]) == 0) {
