@@ -116,10 +116,10 @@ typedef struct uavs3e_com_pic_manager_t {
 
 /* reference picture structure */
 typedef struct uavs3e_com_ref_pic_t {
-    com_pic_t   *pic;    /* address of reference picture */
-    s64        ptr;    /* PTR of reference picture */
-    s16(*map_mv)[REFP_NUM][MV_D];
-    s8(*map_refi)[REFP_NUM];
+    com_pic_t  *pic;    /* address of reference picture */
+    s64         ptr;    /* PTR of reference picture */
+    s16       (*map_mv  )[REFP_NUM][MV_D];
+    s8        (*map_refi)[REFP_NUM];
     s64       *list_ptr;
 } com_ref_pic_t;
 
@@ -140,6 +140,7 @@ typedef struct uavs3e_com_map_t {
     s8       (*map_split)[MAX_CU_DEPTH][NUM_BLOCK_SHAPE];
     s16      (*map_mv   )[REFP_NUM][MV_D];
     s8       (*map_refi )[REFP_NUM];
+    s8        *map_cud;
     s8        *map_ipm;
     u32       *map_pos;
     u8        *map_qp;
@@ -458,9 +459,12 @@ typedef struct uavs3e_com_info_t {
     int                     depth_terminate_P1;
     int                     depth_terminate_P2;
     int                     depth_max_bt_32;
+    int                     neb_qtd;
+    int                     neb_qtd_P1;
 
     int                     rpl_rmv_same_ref;
     int                     adaptive_raster_range; 
+    int                     me_subpel_cost_type;
     int                     intra_fast_rmd;
 
     int                     rmv_skip_candi_by_satd;
@@ -471,6 +475,7 @@ typedef struct uavs3e_com_info_t {
 
     int                     history_skip_idx;
     int                     history_skip_intra;
+
 } com_info_t;
 
 #endif /* _COM_H_ */
