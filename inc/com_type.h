@@ -455,23 +455,25 @@ typedef struct uavs3e_com_info_t {
     int                     ai_split_dir_decision_P1;
     int                     ai_split_dir_decision_P2;
     int                     ai_pred_dir_decision;
+	int                     ai_mpm_rdo;//Only MPMs is used for rdo when the best rdo candidate is one of the MPMs
 
     int                     depth_terminate_P1;
     int                     depth_terminate_P2;
     int                     depth_max_bt_32;
-    int                     neb_qtd;
-    int                     neb_qtd_P1;
+    int                     depth_neb_qtd;
+    int                     depth_limit_part_ratio;
 
     int                     rpl_rmv_same_ref;
     int                     adaptive_raster_range; 
     int                     me_subpel_cost_type;
     int                     intra_fast_rmd;
+    int                     rmv_uni_same_ref;
 
     int                     rmv_skip_candi_by_satd;
     int                     rmv_inter_candi_by_satd;
-    int                     rmv_uni_same_ref;
-
     int                     rmv_satd_level_P1;
+    int                     bind_emvr_to_amvr_P1;
+    int                     bind_emvr_to_amvr_P2;
 
     int                     history_skip_idx;
     int                     history_skip_intra;

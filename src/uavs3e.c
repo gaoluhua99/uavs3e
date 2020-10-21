@@ -213,10 +213,9 @@ static int refine_input_cfg(enc_cfg_t *param, enc_cfg_t *cfg_org)
     }
     if (SPEED_LEVEL(2, cfg_org->speed_level)) {
         cfg_org->max_eqt_size = 32;
-        cfg_org->emvr_enable  = 0;
     }
-    if (SPEED_LEVEL(4, cfg_org->speed_level)) {
-        cfg_org->dt_enable    = 0;
+    if (SPEED_LEVEL(3, cfg_org->speed_level)) {    
+        cfg_org->max_dt_size = 16;
     }
     /***************************************************************************/
 
@@ -1352,6 +1351,7 @@ void *uavs3e_create(enc_cfg_t *cfg, int *err)
         info->ai_split_dir_decision    = SPEED_LEVEL(0, h->cfg.speed_level) ? 1 : 0;
         info->ai_skip_large_cu_eqt     = SPEED_LEVEL(1, h->cfg.speed_level) ? 1 : 0;
         info->ai_split_dir_decision_P1 = SPEED_LEVEL(1, h->cfg.speed_level) ? 1 : 0;
+        info->ai_mpm_rdo               = SPEED_LEVEL(1, h->cfg.speed_level) ? 1 : 0;
         info->ai_split_dir_decision_P2 = SPEED_LEVEL(2, h->cfg.speed_level) ? 1 : 0;
         info->ai_pred_dir_decision     = SPEED_LEVEL(2, h->cfg.speed_level) ? 1 : 0;
     }
@@ -1362,17 +1362,19 @@ void *uavs3e_create(enc_cfg_t *cfg, int *err)
     info->rmv_uni_same_ref           = SPEED_LEVEL(1, h->cfg.speed_level);
     info->rmv_skip_candi_by_satd     = SPEED_LEVEL(1, h->cfg.speed_level);
     info->me_subpel_cost_type        = SPEED_LEVEL(1, h->cfg.speed_level);
-    //info->neb_qtd                    = SPEED_LEVEL(1, h->cfg.speed_level);
+    info->depth_neb_qtd              = SPEED_LEVEL(1, h->cfg.speed_level) && h->cfg.speed_level <= 1;
+    info->bind_emvr_to_amvr_P1       = SPEED_LEVEL(1, h->cfg.speed_level);
 
-    //info->neb_qtd_P1                 = SPEED_LEVEL(2, h->cfg.speed_level);
     info->history_skip_intra         = SPEED_LEVEL(2, h->cfg.speed_level);
     info->history_skip_idx           = SPEED_LEVEL(2, h->cfg.speed_level);
     info->rpl_rmv_same_ref           = SPEED_LEVEL(2, h->cfg.speed_level);
+    info->rmv_satd_level_P1          = SPEED_LEVEL(2, h->cfg.speed_level);
+    info->depth_max_bt_32            = SPEED_LEVEL(2, h->cfg.speed_level);
 
-    info->rmv_satd_level_P1          = SPEED_LEVEL(3, h->cfg.speed_level);
-    info->depth_max_bt_32            = SPEED_LEVEL(3, h->cfg.speed_level);
+    info->depth_terminate_P2         = SPEED_LEVEL(3, h->cfg.speed_level);
+    info->bind_emvr_to_amvr_P2       = SPEED_LEVEL(3, h->cfg.speed_level);
 
-    info->depth_terminate_P2         = SPEED_LEVEL(4, h->cfg.speed_level);
+    info->depth_limit_part_ratio     = SPEED_LEVEL(4, h->cfg.speed_level);
 
     return h;
 }
@@ -1572,7 +1574,7 @@ void uavs3e_load_default_cfg(enc_cfg_t *cfg)
     memset(cfg, 0, sizeof(enc_cfg_t));
 
     //#=========== Misc. ===============================
-    cfg->use_pic_sign        =   1;
+    cfg->use_pic_sign        =   0;
     cfg->bit_depth_internal  =   8;
     cfg->chroma_format       =   1;
 
