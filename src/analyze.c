@@ -1324,7 +1324,7 @@ static int check_split_dir_by_sobel(core_t *core, int *split_allow, int x0, int 
 
         grad_dis_minmax = min(cu_gradh_dis_max, cu_gradv_dis_max);
         avg_grad = (cu_grad_dis[0] + cu_grad_dis[1] + cu_grad_dis[2] + cu_grad_dis[3]);
-        
+
         if (avg_grad > 2.0 * 4) {
             split_allow[NO_SPLIT] = 0;
         }
