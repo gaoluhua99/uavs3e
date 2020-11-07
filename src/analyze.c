@@ -1525,28 +1525,30 @@ static double mode_coding_tree(core_t *core, lbac_t *lbac_cur, int x0, int y0, i
             int is_mode_EQT = com_split_is_EQT(split_mode);
             int enable_cur_split = is_mode_EQT ? (best_split_mode != NO_SPLIT || cost_best > MAX_D_COST_EXT) : 1;
 
-            if (split_mode == SPLIT_EQT_HOR && enable_cur_split) {
-                int cu_width_in_scu = cu_width >> MIN_CU_LOG2;
-                int cu_height_in_scu = cu_height >> MIN_CU_LOG2;
-                int depth1 = cu_data_bst->cudepth[0];
-                int depth2 = cu_data_bst->cudepth[cu_height_in_scu / 4 * cu_width_in_scu];
-                int depth3 = cu_data_bst->cudepth[cu_height_in_scu / 4 * cu_width_in_scu + cu_width_in_scu / 2];
-                int depth4 = cu_data_bst->cudepth[(cu_height_in_scu - 1) * cu_width_in_scu];
-                double avg_depth = ((double)(depth1 + depth2 + depth3 + depth4)) / 4.0;
-                if (avg_depth < 2 && cu_width_log2 + cu_height_log2 > 9)
-                    enable_cur_split = 0;
-            }
+            if (info->depth_limit_eqt_by_cudepth) {
+                if (split_mode == SPLIT_EQT_HOR && enable_cur_split) {
+                    int cu_width_in_scu = cu_width >> MIN_CU_LOG2;
+                    int cu_height_in_scu = cu_height >> MIN_CU_LOG2;
+                    int depth1 = cu_data_bst->cudepth[0];
+                    int depth2 = cu_data_bst->cudepth[cu_height_in_scu / 4 * cu_width_in_scu];
+                    int depth3 = cu_data_bst->cudepth[cu_height_in_scu / 4 * cu_width_in_scu + cu_width_in_scu / 2];
+                    int depth4 = cu_data_bst->cudepth[(cu_height_in_scu - 1) * cu_width_in_scu];
+                    double avg_depth = ((double)(depth1 + depth2 + depth3 + depth4)) / 4.0;
+                    if (avg_depth < 2 && cu_width_log2 + cu_height_log2 > 9)
+                        enable_cur_split = 0;
+                }
 
-            if (split_mode == SPLIT_EQT_VER && enable_cur_split) {
-                int cu_width_in_scu = cu_width >> MIN_CU_LOG2;
-                int cu_height_in_scu = cu_height >> MIN_CU_LOG2;
-                int depth1 = cu_data_bst->cudepth[0];
-                int depth2 = cu_data_bst->cudepth[cu_width_in_scu / 4];
-                int depth3 = cu_data_bst->cudepth[3 * cu_width_in_scu / 4];
-                int depth4 = cu_data_bst->cudepth[(cu_height_in_scu / 2) * cu_width_in_scu + cu_width_in_scu / 4];
-                double avg_depth = ((double)(depth1 + depth2 + depth3 + depth4)) / 4.0;
-                if (avg_depth < 2 && cu_width_log2 + cu_height_log2 > 9)
-                    enable_cur_split = 0;
+                if (split_mode == SPLIT_EQT_VER && enable_cur_split) {
+                    int cu_width_in_scu = cu_width >> MIN_CU_LOG2;
+                    int cu_height_in_scu = cu_height >> MIN_CU_LOG2;
+                    int depth1 = cu_data_bst->cudepth[0];
+                    int depth2 = cu_data_bst->cudepth[cu_width_in_scu / 4];
+                    int depth3 = cu_data_bst->cudepth[3 * cu_width_in_scu / 4];
+                    int depth4 = cu_data_bst->cudepth[(cu_height_in_scu / 2) * cu_width_in_scu + cu_width_in_scu / 4];
+                    double avg_depth = ((double)(depth1 + depth2 + depth3 + depth4)) / 4.0;
+                    if (avg_depth < 2 && cu_width_log2 + cu_height_log2 > 9)
+                        enable_cur_split = 0;
+                }
             }
             
             if (info->depth_rm_splite_by_border) {
